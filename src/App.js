@@ -3,7 +3,7 @@ import axios from 'axios';
 import moment from 'moment-timezone';
 import Highcharts from 'highcharts';
 
-// Rigor Test API keys
+// Rigor Test API keys, normally they wouldn't be stored here
 const WEATHER_API_KEY = '524589f12ff60e2a150e470595208862';
 const GEO_API_KEY = '0264db5477fe4b1c9ee9ae23b3ec59e5';
 
@@ -28,19 +28,11 @@ class App extends React.Component {
 
   componentDidMount() {
     try {
+      // once the user location is set will then begin loading weather information
+      // taking this route because html5 geolocation doesn't like async/await
       this.set_user_location();
     } catch (ex) {
       console.log('componentDidMount ex', ex);
-    }
-  }
-
-  componentDidUpdate() {
-    try {
-      if ( this.state.hourly_weather ) {
-        this.load_highcharts();
-      }
-    } catch (ex) {
-      console.log('componentDidUpdate ex', ex);
     }
   }
 
@@ -66,8 +58,6 @@ class App extends React.Component {
         },
         xAxis: {
             categories: hours
-        },
-        yAxis: {
         },
         series: [{
             name: '',
@@ -123,10 +113,12 @@ class App extends React.Component {
       if ( response && response.data ) {
         const location_data = response.data.results[0];
 
-        if ( location_data.components.city ) {
+        if ( location_data.components.city ) { // if for some reason it doesn't return a city, return the county
           location = `${location_data.components.city}, ${location_data.components.state_code}`;
-        } else {
+        } else if ( location_data.components.county ) {
           location = `${location_data.components.county}, ${location_data.components.state_code}`;
+        } else {
+          location = `N/A, ${location_data.components.state_code}`;
         }
       }
     } catch (ex) {
@@ -162,40 +154,39 @@ class App extends React.Component {
       let current_payload = {};
       let weekly_payload  = [];
       let hourly_payload = [];
-      let api_url = '';
-
-      if ( this.state.user_long && this.state.user_lat ) {
-        api_url = `https://api.openweathermap.org/data/2.5/onecall?lat=${this.state.user_lat}&lon=${this.state.user_long}&appid=${WEATHER_API_KEY}&units=imperial`;
-      }
+      const api_url = `https://api.openweathermap.org/data/2.5/onecall?lat=${this.state.user_lat}&lon=${this.state.user_long}&appid=${WEATHER_API_KEY}&units=imperial`;
 
       const weather_payload = await this.make_get_request(api_url);
 
       if ( weather_payload.status === 200 ) {
-        current_payload  = weather_payload.data.current;
-        weekly_payload  = weather_payload.data.daily;
+        current_payload = weather_payload.data.current;
+        weekly_payload = weather_payload.data.daily;
         hourly_payload = weather_payload.data.hourly;
 
-        // we only want 5 day forecast, but they gave us 7, remove the 1st and last item;
-        weekly_payload.shift();
-        weekly_payload.pop();
+        // we only want 5 day forecast, but they gave us 8;
+        weekly_payload = weekly_payload.splice(1, 5);
       }
 
       this.setState({
         current_weather: current_payload,
         hourly_weather: hourly_payload,
         weekly_weather: weekly_payload,
-        is_weather_data_loaded: weather_payload.status === 200 ? true : false
+        is_weather_data_loaded: weather_payload && weather_payload.status === 200 ? true : false
+      }, () => {
+        if ( this.state.hourly_weather ) {
+          this.load_highcharts();
+        }
       });
     } catch (ex) {
       console.log('set_weather_data ex', ex);
     }
   }
 
-  async set_user_location() {
+  set_user_location() {
     try {
       const that = this;
 
-      await navigator.geolocation.getCurrentPosition(async(payload) => {
+      navigator.geolocation.getCurrentPosition(async (payload) => {
         that.setState({
           user_lat: payload.coords.latitude,
           user_long: payload.coords.longitude,
@@ -203,7 +194,7 @@ class App extends React.Component {
         }, () => {
           that.set_weather_data();
         });
-      }, async () => {
+      }, async (failure) => {
         // user prevented geolocation, use default
         that.setState({
           user_lat: DEFAULT_LAT,
